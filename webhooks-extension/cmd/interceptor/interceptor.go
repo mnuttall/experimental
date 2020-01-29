@@ -34,6 +34,7 @@ func main() {
 	log.Print("Interceptor started")
 	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 
+		// Copy Headers from the request onto the response
 		for k, valueArray := range request.Header {
 			for _, v := range valueArray {
 				writer.Header().Add(k, v)
