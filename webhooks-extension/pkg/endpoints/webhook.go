@@ -28,6 +28,7 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -51,8 +52,13 @@ const (
 	Creation of the eventlistener, called when no eventlistener exists at
 	the point of webhook creation.
 */
-func (r Resource) createEventListener(webhook webhook, namespace, monitorTriggerName string) (*v1alpha1.EventListener, error) {
-	hookParams, monitorParams := r.getParams(webhook)
+func (r Resource) createEventListener(webhook webhook, namespace, monitorTriggerNamePrefix string) (*v1alpha1.EventListener, error) {
+
+	monitorBindingName, err := getMonitorBindingName(webhook.GitRepositoryURL, webhook.PullTask)
+	if err != nil {
+		return nil, err
+	}
+	hookExtBinding, monitorExtBinding := r.createBindings(webhook, monitorBindingName)
 
 	pushTrigger := r.newTrigger(webhook.Name+"-"+webhook.Namespace+"-push-event",
 		webhook.Pipeline+"-push-binding",
@@ -60,7 +66,7 @@ func (r Resource) createEventListener(webhook webhook, namespace, monitorTrigger
 		webhook.GitRepositoryURL,
 		"push, Push Hook, Tag Push Hook",
 		webhook.AccessTokenRef,
-		hookParams)
+		hookExtBinding)
 
 	pullRequestTrigger := r.newTrigger(webhook.Name+"-"+webhook.Namespace+"-pullrequest-event",
 		webhook.Pipeline+"-pullrequest-binding",
@@ -68,22 +74,20 @@ func (r Resource) createEventListener(webhook webhook, namespace, monitorTrigger
 		webhook.GitRepositoryURL,
 		"pull_request, Merge Request Hook",
 		webhook.AccessTokenRef,
-		hookParams)
-	pullRequestTrigger.Interceptor.Header = append(pullRequestTrigger.Interceptor.Header, actions)
+		hookExtBinding)
 
-	monitorBindingName, err := getMonitorBindingName(webhook.GitRepositoryURL, webhook.PullTask)
-	if err != nil {
-		return nil, err
-	}
+	//slightly dodgy but we dont let you add extra interceptors
+	pullRequestTrigger.Interceptors[0].Webhook.Header = append(pullRequestTrigger.Interceptors[0].Webhook.Header, actions)
 
+	monitorTriggerName := r.generateMonitorTriggerName(monitorTriggerNamePrefix, []v1alpha1.EventListenerTrigger{})
 	monitorTrigger := r.newTrigger(monitorTriggerName,
 		monitorBindingName,
 		webhook.PullTask+"-template",
 		webhook.GitRepositoryURL,
 		"pull_request, Merge Request Hook",
 		webhook.AccessTokenRef,
-		monitorParams)
-	monitorTrigger.Interceptor.Header = append(monitorTrigger.Interceptor.Header, actions)
+		monitorExtBinding)
+	monitorTrigger.Interceptors[0].Webhook.Header = append(monitorTrigger.Interceptors[0].Webhook.Header, actions)
 
 	triggers := []v1alpha1.EventListenerTrigger{pushTrigger, pullRequestTrigger, monitorTrigger}
 
@@ -104,15 +108,21 @@ func (r Resource) createEventListener(webhook webhook, namespace, monitorTrigger
 	Update of the eventlistener, called when adding additional webhooks as we
 	run with a single eventlistener.
 */
-func (r Resource) updateEventListener(eventListener *v1alpha1.EventListener, webhook webhook, monitorTriggerName string) (*v1alpha1.EventListener, error) {
-	hookParams, monitorParams := r.getParams(webhook)
+func (r Resource) updateEventListener(eventListener *v1alpha1.EventListener, webhook webhook, monitorTriggerNamePrefix string) (*v1alpha1.EventListener, error) {
+
+	monitorBindingName, err := getMonitorBindingName(webhook.GitRepositoryURL, webhook.PullTask)
+	if err != nil {
+		return nil, err
+	}
+	hookExtBinding, monitorExtBinding := r.createBindings(webhook, monitorBindingName)
+
 	newPushTrigger := r.newTrigger(webhook.Name+"-"+webhook.Namespace+"-push-event",
 		webhook.Pipeline+"-push-binding",
 		webhook.Pipeline+"-template",
 		webhook.GitRepositoryURL,
 		"push, Push Hook, Tag Push Hook",
 		webhook.AccessTokenRef,
-		hookParams)
+		hookExtBinding)
 
 	newPullRequestTrigger := r.newTrigger(webhook.Name+"-"+webhook.Namespace+"-pullrequest-event",
 		webhook.Pipeline+"-pullrequest-binding",
@@ -120,38 +130,92 @@ func (r Resource) updateEventListener(eventListener *v1alpha1.EventListener, web
 		webhook.GitRepositoryURL,
 		"pull_request, Merge Request Hook",
 		webhook.AccessTokenRef,
-		hookParams)
-	newPullRequestTrigger.Interceptor.Header = append(newPullRequestTrigger.Interceptor.Header, actions)
+		hookExtBinding)
+	newPullRequestTrigger.Interceptors[0].Webhook.Header = append(newPullRequestTrigger.Interceptors[0].Webhook.Header, actions)
 
 	eventListener.Spec.Triggers = append(eventListener.Spec.Triggers, newPushTrigger)
 	eventListener.Spec.Triggers = append(eventListener.Spec.Triggers, newPullRequestTrigger)
 
-	existingMonitorFound := false
-	for _, trigger := range eventListener.Spec.Triggers {
-		if trigger.Name == monitorTriggerName {
-			existingMonitorFound = true
-			break
-		}
-	}
-	if !existingMonitorFound {
-		monitorBindingName, err := getMonitorBindingName(webhook.GitRepositoryURL, webhook.PullTask)
-		if err != nil {
-			return nil, err
-		}
+	existingMonitorFound, _ := doesMonitorExist(monitorTriggerNamePrefix, webhook, eventListener.Spec.Triggers)
 
+	if !existingMonitorFound {
+		monitorTriggerName := r.generateMonitorTriggerName(monitorTriggerNamePrefix, eventListener.Spec.Triggers)
 		newMonitor := r.newTrigger(monitorTriggerName,
 			monitorBindingName,
 			webhook.PullTask+"-template",
 			webhook.GitRepositoryURL,
 			"pull_request, Merge Request Hook",
 			webhook.AccessTokenRef,
-			monitorParams)
-		newMonitor.Interceptor.Header = append(newMonitor.Interceptor.Header, actions)
+			monitorExtBinding)
+		newMonitor.Interceptors[0].Webhook.Header = append(newMonitor.Interceptors[0].Webhook.Header, actions)
 
 		eventListener.Spec.Triggers = append(eventListener.Spec.Triggers, newMonitor)
 	}
 
 	return r.TriggersClient.TektonV1alpha1().EventListeners(eventListener.GetNamespace()).Update(eventListener)
+}
+
+func compareRepos(url1, url2 string) (bool, error) {
+	s1, o1, r1, err1 := getGitValues(url1)
+	s2, o2, r2, err2 := getGitValues(url2)
+	if err1 != nil {
+		return false, err1
+	}
+	if err2 != nil {
+		return false, err2
+	}
+	if s1 == s2 && o1 == o2 && r1 == r2 {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (r Resource) generateMonitorTriggerName(prefix string, existingTriggers []v1alpha1.EventListenerTrigger) string {
+	rand.Seed(time.Now().UnixNano())
+	suggestedName := prefix + strconv.Itoa(rand.Intn(10000))
+
+	for {
+		nameOK := true
+		for _, t := range existingTriggers {
+			if t.Name == suggestedName {
+				nameOK = false
+				suggestedName = prefix + strconv.Itoa(rand.Intn(10000))
+				break
+			}
+		}
+		if nameOK {
+			break
+		}
+	}
+	return suggestedName
+}
+
+func doesMonitorExist(monitorTriggerNamePrefix string, webhook webhook, triggers []v1alpha1.EventListenerTrigger) (bool, string) {
+	existingMonitorFound := false
+	monitorName := ""
+	for _, trigger := range triggers {
+		if strings.HasPrefix(trigger.Name, monitorTriggerNamePrefix) {
+			headers := trigger.Interceptors[0].Webhook.Header
+			for _, header := range headers {
+				if header.Name == "Wext-Repository-Url" {
+					match, err := compareRepos(header.Value.StringVal, webhook.GitRepositoryURL)
+					if err != nil {
+						logging.Log.Errorf("DUANE %s", err.Error())
+						return false, ""
+					}
+					if match {
+						existingMonitorFound = true
+						monitorName = trigger.Name
+						break
+					}
+				}
+			}
+			if existingMonitorFound {
+				break
+			}
+		}
+	}
+	return existingMonitorFound, monitorName
 }
 
 func getMonitorBindingName(repoURL, monitorTask string) (string, error) {
@@ -166,39 +230,44 @@ func getMonitorBindingName(repoURL, monitorTask string) (string, error) {
 	return monitorBindingName, nil
 }
 
-func (r Resource) newTrigger(name, bindingName, templateName, repoURL, event, secretName string, params []pipelinesv1alpha1.Param) v1alpha1.EventListenerTrigger {
+func (r Resource) newTrigger(name, bindingName, templateName, repoURL, event, secretName, extraBindingName string) v1alpha1.EventListenerTrigger {
 	return v1alpha1.EventListenerTrigger{
 		Name: name,
-		Binding: v1alpha1.EventListenerBinding{
-			Name:       bindingName,
-			APIVersion: "v1alpha1",
+		Bindings: []*v1alpha1.EventListenerBinding{
+			{
+				Name:       bindingName,
+				APIVersion: "v1alpha1",
+			},
+			{
+				Name:       extraBindingName,
+				APIVersion: "v1alpha1",
+			},
 		},
-		Params: params,
 		Template: v1alpha1.EventListenerTemplate{
 			Name:       templateName,
 			APIVersion: "v1alpha1",
 		},
-		Interceptor: &v1alpha1.EventInterceptor{
-			Header: []pipelinesv1alpha1.Param{
-				{Name: "Wext-Trigger-Name", Value: pipelinesv1alpha1.ArrayOrString{Type: pipelinesv1alpha1.ParamTypeString, StringVal: name}},
-				{Name: "Wext-Repository-Url", Value: pipelinesv1alpha1.ArrayOrString{Type: pipelinesv1alpha1.ParamTypeString, StringVal: repoURL}},
-				{Name: "Wext-Incoming-Event", Value: pipelinesv1alpha1.ArrayOrString{Type: pipelinesv1alpha1.ParamTypeString, StringVal: event}},
-				{Name: "Wext-Secret-Name", Value: pipelinesv1alpha1.ArrayOrString{Type: pipelinesv1alpha1.ParamTypeString, StringVal: secretName}}},
-			ObjectRef: &corev1.ObjectReference{
-				APIVersion: "v1",
-				Kind:       "Service",
-				Name:       "tekton-webhooks-extension-validator",
-				Namespace:  r.Defaults.Namespace,
+		Interceptors: []*v1alpha1.EventInterceptor{
+			{
+				Webhook: &v1alpha1.WebhookInterceptor{
+					Header: []pipelinesv1alpha1.Param{
+						{Name: "Wext-Trigger-Name", Value: pipelinesv1alpha1.ArrayOrString{Type: pipelinesv1alpha1.ParamTypeString, StringVal: name}},
+						{Name: "Wext-Repository-Url", Value: pipelinesv1alpha1.ArrayOrString{Type: pipelinesv1alpha1.ParamTypeString, StringVal: repoURL}},
+						{Name: "Wext-Incoming-Event", Value: pipelinesv1alpha1.ArrayOrString{Type: pipelinesv1alpha1.ParamTypeString, StringVal: event}},
+						{Name: "Wext-Secret-Name", Value: pipelinesv1alpha1.ArrayOrString{Type: pipelinesv1alpha1.ParamTypeString, StringVal: secretName}}},
+					ObjectRef: &corev1.ObjectReference{
+						APIVersion: "v1",
+						Kind:       "Service",
+						Name:       "tekton-webhooks-extension-validator",
+						Namespace:  r.Defaults.Namespace,
+					},
+				},
 			},
 		},
 	}
 }
 
-/*
-	Processing of the inputs into the required structure for
-	the eventlistener.
-*/
-func (r Resource) getParams(webhook webhook) (webhookParams, monitorParams []pipelinesv1alpha1.Param) {
+func (r Resource) createBindings(webhook webhook, monitorTriggerName string) (webhookParamsBinding, monitorParamsBinding string) {
 	saName := webhook.ServiceAccount
 	requestedReleaseName := webhook.ReleaseName
 	if saName == "" {
@@ -281,7 +350,35 @@ func (r Resource) getParams(webhook webhook) (webhookParams, monitorParams []pip
 		{Name: "apiurl", Value: pipelinesv1alpha1.ArrayOrString{Type: pipelinesv1alpha1.ParamTypeString, StringVal: apiURL}},
 	}
 
-	return hookParams, prMonitorParams
+	hookBinding := v1alpha1.TriggerBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "wext-" + webhook.Name + "-",
+		},
+		Spec: v1alpha1.TriggerBindingSpec{
+			Params: hookParams,
+		},
+	}
+
+	monitorBinding := v1alpha1.TriggerBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "wext-" + monitorTriggerName + "-",
+		},
+		Spec: v1alpha1.TriggerBindingSpec{
+			Params: prMonitorParams,
+		},
+	}
+
+	actualHookBinding, err := r.TriggersClient.TektonV1alpha1().TriggerBindings(r.Defaults.Namespace).Create(&hookBinding)
+	if err != nil {
+		logging.Log.Errorf("DUANE1")
+	}
+
+	actualMonitorBinding, err := r.TriggersClient.TektonV1alpha1().TriggerBindings(r.Defaults.Namespace).Create(&monitorBinding)
+	if err != nil {
+		logging.Log.Errorf("DUANE2 %s", err.Error())
+	}
+
+	return actualHookBinding.GetName(), actualMonitorBinding.GetName()
 }
 
 func (r Resource) getDashboardURL(installNs string) string {
@@ -475,11 +572,10 @@ func (r Resource) createWebhook(request *restful.Request, response *restful.Resp
 	}
 	sanitisedURL := gitServer + "/" + gitOwner + "/" + gitRepo
 	// Single monitor trigger for all triggers on a repo - thus name to use for monitor is
-	monitorTriggerName := strings.TrimPrefix(gitServer+"/"+gitOwner+"/"+gitRepo, "http://")
-	monitorTriggerName = strings.TrimPrefix(monitorTriggerName, "https://")
+	monitorTriggerNamePrefix := gitOwner + "." + gitRepo + "-"
 
 	if eventListener != nil && eventListener.GetName() != "" {
-		_, err := r.updateEventListener(eventListener, webhook, monitorTriggerName)
+		_, err := r.updateEventListener(eventListener, webhook, monitorTriggerNamePrefix)
 		if err != nil {
 			msg := fmt.Sprintf("error creating webhook due to error updating eventlistener: %s", err)
 			logging.Log.Errorf("%s", msg)
@@ -488,7 +584,7 @@ func (r Resource) createWebhook(request *restful.Request, response *restful.Resp
 		}
 	} else {
 		logging.Log.Info("No existing eventlistener found, creating a new one...")
-		_, err := r.createEventListener(webhook, installNs, monitorTriggerName)
+		_, err := r.createEventListener(webhook, installNs, monitorTriggerNamePrefix)
 		if err != nil {
 			msg := fmt.Sprintf("error creating webhook due to error creating eventlistener. Error was: %s", err)
 			logging.Log.Errorf("%s", msg)
@@ -545,7 +641,7 @@ func (r Resource) createWebhook(request *restful.Request, response *restful.Resp
 		// Create webhook
 		err = r.AddWebhook(webhook, gitOwner, gitRepo)
 		if err != nil {
-			err2 := r.deleteFromEventListener(webhook.Name+"-"+webhook.Namespace, installNs, monitorTriggerName, webhook.GitRepositoryURL)
+			err2 := r.deleteFromEventListener(webhook.Name+"-"+webhook.Namespace, installNs, monitorTriggerNamePrefix, webhook)
 			if err2 != nil {
 				updatedMsg := fmt.Sprintf("error creating webhook. Also failed to cleanup and delete entry from eventlistener. Errors were: %s and %s", err, err2)
 				RespondError(response, errors.New(updatedMsg), http.StatusInternalServerError)
@@ -684,7 +780,7 @@ func (r Resource) deleteWebhook(request *restful.Request, response *restful.Resp
 				r.deletePipelineRuns(repo, namespace, hook.Pipeline)
 			}
 			eventListenerEntryPrefix := name + "-" + namespace
-			err = r.deleteFromEventListener(eventListenerEntryPrefix, r.Defaults.Namespace, monitorTriggerName, repo)
+			err = r.deleteFromEventListener(eventListenerEntryPrefix, r.Defaults.Namespace, monitorTriggerName, hook)
 			if err != nil {
 				logging.Log.Error(err)
 				theError := errors.New("error deleting webhook from eventlistener.")
@@ -705,7 +801,7 @@ func (r Resource) deleteWebhook(request *restful.Request, response *restful.Resp
 
 }
 
-func (r Resource) deleteFromEventListener(name, installNS, monitorTriggerName, repoOnParams string) error {
+func (r Resource) deleteFromEventListener(name, installNS, monitorTriggerNamePrefix string, webhook webhook) error {
 	logging.Log.Debugf("Deleting triggers for %s from the eventlistener", name)
 	el, err := r.TriggersClient.TektonV1alpha1().EventListeners(installNS).Get(eventListenerName, metav1.GetOptions{})
 	if err != nil {
@@ -721,13 +817,15 @@ func (r Resource) deleteFromEventListener(name, installNS, monitorTriggerName, r
 	triggersOnRepo := 0
 	triggersDeleted := 0
 
+	existingMonitorFound, monitorTriggerName := doesMonitorExist(monitorTriggerNamePrefix, webhook, el.Spec.Triggers)
+
 	for _, t := range currentTriggers {
-		if t.Name == monitorTriggerName {
+		if existingMonitorFound && t.Name == monitorTriggerName {
 			monitorTrigger = t
 		} else {
-			interceptorParams := t.Interceptor.Header
+			interceptorParams := t.Interceptors[0].Webhook.Header
 			for _, p := range interceptorParams {
-				if p.Name == "Wext-Repository-Url" && p.Value.StringVal == repoOnParams {
+				if p.Name == "Wext-Repository-Url" && p.Value.StringVal == webhook.GitRepositoryURL {
 					triggersOnRepo++
 				}
 			}
@@ -825,10 +923,10 @@ func (r Resource) getWebhooksFromEventListener() ([]webhook, error) {
 	for _, trigger := range el.Spec.Triggers {
 		checkHook := false
 		if strings.HasSuffix(trigger.Name, "-push-event") {
-			hook = getHookFromTrigger(trigger, "-push-event")
+			hook = r.getHookFromTrigger(trigger, "-push-event")
 			checkHook = true
 		} else if strings.HasSuffix(trigger.Name, "-pullrequest-event") {
-			hook = getHookFromTrigger(trigger, "-pullrequest-event")
+			hook = r.getHookFromTrigger(trigger, "-pullrequest-event")
 			checkHook = true
 		}
 		if checkHook && !containedInArray(hooks, hook) {
@@ -838,27 +936,34 @@ func (r Resource) getWebhooksFromEventListener() ([]webhook, error) {
 	return hooks, nil
 }
 
-func getHookFromTrigger(t v1alpha1.EventListenerTrigger, suffix string) webhook {
+func (r Resource) getHookFromTrigger(t v1alpha1.EventListenerTrigger, suffix string) webhook {
 
 	var releaseName, namespace, serviceaccount, pulltask, dockerreg, helmsecret, repo, gitSecret string
-	for _, param := range t.Params {
-		switch param.Name {
-		case "webhooks-tekton-release-name":
-			releaseName = param.Value.StringVal
-		case "webhooks-tekton-target-namespace":
-			namespace = param.Value.StringVal
-		case "webhooks-tekton-service-account":
-			serviceaccount = param.Value.StringVal
-		case "webhooks-tekton-pull-task":
-			pulltask = param.Value.StringVal
-		case "webhooks-tekton-docker-registry":
-			dockerreg = param.Value.StringVal
-		case "webhooks-tekton-helm-secret":
-			helmsecret = param.Value.StringVal
+	for _, binding := range t.Bindings {
+		b, err := r.TriggersClient.TektonV1alpha1().TriggerBindings(r.Defaults.Namespace).Get(binding.Name, metav1.GetOptions{})
+		if err != nil {
+			logging.Log.Errorf("Error getting trigger binding %s", binding.Name)
+			return webhook{}
+		}
+		for _, param := range b.Spec.Params {
+			switch param.Name {
+			case "webhooks-tekton-release-name":
+				releaseName = param.Value.StringVal
+			case "webhooks-tekton-target-namespace":
+				namespace = param.Value.StringVal
+			case "webhooks-tekton-service-account":
+				serviceaccount = param.Value.StringVal
+			case "webhooks-tekton-pull-task":
+				pulltask = param.Value.StringVal
+			case "webhooks-tekton-docker-registry":
+				dockerreg = param.Value.StringVal
+			case "webhooks-tekton-helm-secret":
+				helmsecret = param.Value.StringVal
+			}
 		}
 	}
 
-	for _, header := range t.Interceptor.Header {
+	for _, header := range t.Interceptors[0].Webhook.Header {
 		switch header.Name {
 		case "Wext-Repository-Url":
 			repo = header.Value.StringVal

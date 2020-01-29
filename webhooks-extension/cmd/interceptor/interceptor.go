@@ -15,14 +15,15 @@ package main
 
 import (
 	"fmt"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -32,6 +33,13 @@ const (
 func main() {
 	log.Print("Interceptor started")
 	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
+
+		for k, valueArray := range request.Header {
+			for _, v := range valueArray {
+				writer.Header().Add(k, v)
+			}
+		}
+
 		foundTriggerName := request.Header.Get("Wext-Trigger-Name")
 		config, err := rest.InClusterConfig()
 		if err != nil {

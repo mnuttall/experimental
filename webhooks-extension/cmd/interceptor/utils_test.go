@@ -14,14 +14,12 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
-	"github.com/google/go-github/github"
-	gitlab "github.com/xanzy/go-gitlab"
 	"net/http"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/google/go-github/github"
 )
 
 func TestSanitizeGitInput(t *testing.T) {
@@ -101,119 +99,119 @@ func TestAddBranchAndTagGitHubEvents(t *testing.T) {
 	}
 }
 
-func TestAddBranchAndTagGitLabEvents(t *testing.T) {
+// func TestAddBranchAndTagGitLabEvents(t *testing.T) {
 
-	// GitLab Push
-	glPushEvent := gitlab.PushEvent{
-		Ref:         "blah/head/foo",
-		CheckoutSHA: "12345678901234567890",
-	}
-	glPushEventExpectedResult := "{\"object_kind\":\"\",\"before\":\"\",\"after\":\"\",\"ref\":\"blah/head/foo\",\"checkout_sha\":\"12345678901234567890\",\"user_id\":0,\"user_name\":\"\",\"user_username\":\"\",\"user_email\":\"\",\"user_avatar\":\"\",\"project_id\":0,\"project\":{\"name\":\"\",\"description\":\"\",\"avatar_url\":\"\",\"git_ssh_url\":\"\",\"git_http_url\":\"\",\"namespace\":\"\",\"path_with_namespace\":\"\",\"default_branch\":\"\",\"homepage\":\"\",\"url\":\"\",\"ssh_url\":\"\",\"http_url\":\"\",\"web_url\":\"\",\"visibility\":\"\"},\"repository\":null,\"commits\":null,\"total_commits_count\":0,\"webhooks-tekton-git-branch\":\"foo\",\"webhooks-tekton-image-tag\":\"1234567\"}"
-	payload, _ := addBranchAndTag(&glPushEvent)
-	if glPushEventExpectedResult != string(payload) {
-		t.Errorf("GitLab push event result unexpected, received %s, expected %s", string(payload), glPushEventExpectedResult)
-	}
+// 	// GitLab Push
+// 	glPushEvent := gitlab.PushEvent{
+// 		Ref:         "blah/head/foo",
+// 		CheckoutSHA: "12345678901234567890",
+// 	}
+// 	glPushEventExpectedResult := "{\"object_kind\":\"\",\"before\":\"\",\"after\":\"\",\"ref\":\"blah/head/foo\",\"checkout_sha\":\"12345678901234567890\",\"user_id\":0,\"user_name\":\"\",\"user_username\":\"\",\"user_email\":\"\",\"user_avatar\":\"\",\"project_id\":0,\"project\":{\"name\":\"\",\"description\":\"\",\"avatar_url\":\"\",\"git_ssh_url\":\"\",\"git_http_url\":\"\",\"namespace\":\"\",\"path_with_namespace\":\"\",\"default_branch\":\"\",\"homepage\":\"\",\"url\":\"\",\"ssh_url\":\"\",\"http_url\":\"\",\"web_url\":\"\",\"visibility\":\"\"},\"repository\":null,\"commits\":null,\"total_commits_count\":0,\"webhooks-tekton-git-branch\":\"foo\",\"webhooks-tekton-image-tag\":\"1234567\"}"
+// 	payload, _ := addBranchAndTag(&glPushEvent)
+// 	if glPushEventExpectedResult != string(payload) {
+// 		t.Errorf("GitLab push event result unexpected, received %s, expected %s", string(payload), glPushEventExpectedResult)
+// 	}
 
-	// GitLab Tag Push
-	glTagEvent := gitlab.TagEvent{
-		Ref:         "refs/tags/v1.0",
-		CheckoutSHA: "12345678901234567890",
-	}
-	glTagEventExpectedResult := "{\"object_kind\":\"\",\"before\":\"\",\"after\":\"\",\"ref\":\"refs/tags/v1.0\",\"checkout_sha\":\"12345678901234567890\",\"user_id\":0,\"user_name\":\"\",\"user_avatar\":\"\",\"project_id\":0,\"message\":\"\",\"project\":{\"name\":\"\",\"description\":\"\",\"avatar_url\":\"\",\"git_ssh_url\":\"\",\"git_http_url\":\"\",\"namespace\":\"\",\"path_with_namespace\":\"\",\"default_branch\":\"\",\"homepage\":\"\",\"url\":\"\",\"ssh_url\":\"\",\"http_url\":\"\",\"web_url\":\"\",\"visibility\":\"\"},\"repository\":null,\"commits\":null,\"total_commits_count\":0,\"webhooks-tekton-git-branch\":\"v1.0\",\"webhooks-tekton-image-tag\":\"v1.0\"}"
-	payload, _ = addBranchAndTag(&glTagEvent)
-	if glTagEventExpectedResult != string(payload) {
-		t.Errorf("GitLab tag event result unexpected, received %s, expected %s", string(payload), glTagEventExpectedResult)
-	}
+// 	// GitLab Tag Push
+// 	glTagEvent := gitlab.TagEvent{
+// 		Ref:         "refs/tags/v1.0",
+// 		CheckoutSHA: "12345678901234567890",
+// 	}
+// 	glTagEventExpectedResult := "{\"object_kind\":\"\",\"before\":\"\",\"after\":\"\",\"ref\":\"refs/tags/v1.0\",\"checkout_sha\":\"12345678901234567890\",\"user_id\":0,\"user_name\":\"\",\"user_avatar\":\"\",\"project_id\":0,\"message\":\"\",\"project\":{\"name\":\"\",\"description\":\"\",\"avatar_url\":\"\",\"git_ssh_url\":\"\",\"git_http_url\":\"\",\"namespace\":\"\",\"path_with_namespace\":\"\",\"default_branch\":\"\",\"homepage\":\"\",\"url\":\"\",\"ssh_url\":\"\",\"http_url\":\"\",\"web_url\":\"\",\"visibility\":\"\"},\"repository\":null,\"commits\":null,\"total_commits_count\":0,\"webhooks-tekton-git-branch\":\"v1.0\",\"webhooks-tekton-image-tag\":\"v1.0\"}"
+// 	payload, _ = addBranchAndTag(&glTagEvent)
+// 	if glTagEventExpectedResult != string(payload) {
+// 		t.Errorf("GitLab tag event result unexpected, received %s, expected %s", string(payload), glTagEventExpectedResult)
+// 	}
 
-	//We need to mock up more of a struct for gitlab merge requests,
-	//so we have this in a seperate test just for some code clartiy
-	type ObjectAttributes struct {
-		ID                       int                 `json:"id"`
-		TargetBranch             string              `json:"target_branch"`
-		SourceBranch             string              `json:"source_branch"`
-		SourceProjectID          int                 `json:"source_project_id"`
-		AuthorID                 int                 `json:"author_id"`
-		AssigneeID               int                 `json:"assignee_id"`
-		Title                    string              `json:"title"`
-		CreatedAt                string              `json:"created_at"` // Should be *time.Time (see Gitlab issue #21468)
-		UpdatedAt                string              `json:"updated_at"` // Should be *time.Time (see Gitlab issue #21468)
-		StCommits                []*gitlab.Commit    `json:"st_commits"`
-		StDiffs                  []*gitlab.Diff      `json:"st_diffs"`
-		MilestoneID              int                 `json:"milestone_id"`
-		State                    string              `json:"state"`
-		MergeStatus              string              `json:"merge_status"`
-		TargetProjectID          int                 `json:"target_project_id"`
-		IID                      int                 `json:"iid"`
-		Description              string              `json:"description"`
-		Position                 int                 `json:"position"`
-		LockedAt                 string              `json:"locked_at"`
-		UpdatedByID              int                 `json:"updated_by_id"`
-		MergeError               string              `json:"merge_error"`
-		MergeParams              *gitlab.MergeParams `json:"merge_params"`
-		MergeWhenBuildSucceeds   bool                `json:"merge_when_build_succeeds"`
-		MergeUserID              int                 `json:"merge_user_id"`
-		MergeCommitSHA           string              `json:"merge_commit_sha"`
-		DeletedAt                string              `json:"deleted_at"`
-		ApprovalsBeforeMerge     string              `json:"approvals_before_merge"`
-		RebaseCommitSHA          string              `json:"rebase_commit_sha"`
-		InProgressMergeCommitSHA string              `json:"in_progress_merge_commit_sha"`
-		LockVersion              int                 `json:"lock_version"`
-		TimeEstimate             int                 `json:"time_estimate"`
-		Source                   *gitlab.Repository  `json:"source"`
-		Target                   *gitlab.Repository  `json:"target"`
-		LastCommit               struct {
-			ID        string     `json:"id"`
-			Message   string     `json:"message"`
-			Timestamp *time.Time `json:"timestamp"`
-			URL       string     `json:"url"`
-			Author    struct {
-				Name  string `json:"name"`
-				Email string `json:"email"`
-			} `json:"author"`
-		} `json:"last_commit"`
-		WorkInProgress bool                 `json:"work_in_progress"`
-		URL            string               `json:"url"`
-		Action         string               `json:"action"`
-		OldRev         string               `json:"oldrev"`
-		Assignee       gitlab.MergeAssignee `json:"assignee"`
-	}
+// 	//We need to mock up more of a struct for gitlab merge requests,
+// 	//so we have this in a seperate test just for some code clartiy
+// 	type ObjectAttributes struct {
+// 		ID                       int                 `json:"id"`
+// 		TargetBranch             string              `json:"target_branch"`
+// 		SourceBranch             string              `json:"source_branch"`
+// 		SourceProjectID          int                 `json:"source_project_id"`
+// 		AuthorID                 int                 `json:"author_id"`
+// 		AssigneeID               int                 `json:"assignee_id"`
+// 		Title                    string              `json:"title"`
+// 		CreatedAt                string              `json:"created_at"` // Should be *time.Time (see Gitlab issue #21468)
+// 		UpdatedAt                string              `json:"updated_at"` // Should be *time.Time (see Gitlab issue #21468)
+// 		StCommits                []*gitlab.Commit    `json:"st_commits"`
+// 		StDiffs                  []*gitlab.Diff      `json:"st_diffs"`
+// 		MilestoneID              int                 `json:"milestone_id"`
+// 		State                    string              `json:"state"`
+// 		MergeStatus              string              `json:"merge_status"`
+// 		TargetProjectID          int                 `json:"target_project_id"`
+// 		IID                      int                 `json:"iid"`
+// 		Description              string              `json:"description"`
+// 		Position                 int                 `json:"position"`
+// 		LockedAt                 string              `json:"locked_at"`
+// 		UpdatedByID              int                 `json:"updated_by_id"`
+// 		MergeError               string              `json:"merge_error"`
+// 		MergeParams              *gitlab.MergeParams `json:"merge_params"`
+// 		MergeWhenBuildSucceeds   bool                `json:"merge_when_build_succeeds"`
+// 		MergeUserID              int                 `json:"merge_user_id"`
+// 		MergeCommitSHA           string              `json:"merge_commit_sha"`
+// 		DeletedAt                string              `json:"deleted_at"`
+// 		ApprovalsBeforeMerge     string              `json:"approvals_before_merge"`
+// 		RebaseCommitSHA          string              `json:"rebase_commit_sha"`
+// 		InProgressMergeCommitSHA string              `json:"in_progress_merge_commit_sha"`
+// 		LockVersion              int                 `json:"lock_version"`
+// 		TimeEstimate             int                 `json:"time_estimate"`
+// 		Source                   *gitlab.Repository  `json:"source"`
+// 		Target                   *gitlab.Repository  `json:"target"`
+// 		LastCommit               struct {
+// 			ID        string     `json:"id"`
+// 			Message   string     `json:"message"`
+// 			Timestamp *time.Time `json:"timestamp"`
+// 			URL       string     `json:"url"`
+// 			Author    struct {
+// 				Name  string `json:"name"`
+// 				Email string `json:"email"`
+// 			} `json:"author"`
+// 		} `json:"last_commit"`
+// 		WorkInProgress bool                 `json:"work_in_progress"`
+// 		URL            string               `json:"url"`
+// 		Action         string               `json:"action"`
+// 		OldRev         string               `json:"oldrev"`
+// 		Assignee       gitlab.MergeAssignee `json:"assignee"`
+// 	}
 
-	glMergeEvent := gitlab.MergeEvent{
-		ObjectAttributes: ObjectAttributes{
-			TargetBranch: "foo",
-			LastCommit: struct {
-				ID        string     `json:"id"`
-				Message   string     `json:"message"`
-				Timestamp *time.Time `json:"timestamp"`
-				URL       string     `json:"url"`
-				Author    struct {
-					Name  string `json:"name"`
-					Email string `json:"email"`
-				} `json:"author"`
-			}{
-				ID: "12345678901234567890",
-			},
-		},
-	}
+// 	glMergeEvent := gitlab.MergeEvent{
+// 		ObjectAttributes: ObjectAttributes{
+// 			TargetBranch: "foo",
+// 			LastCommit: struct {
+// 				ID        string     `json:"id"`
+// 				Message   string     `json:"message"`
+// 				Timestamp *time.Time `json:"timestamp"`
+// 				URL       string     `json:"url"`
+// 				Author    struct {
+// 					Name  string `json:"name"`
+// 					Email string `json:"email"`
+// 				} `json:"author"`
+// 			}{
+// 				ID: "12345678901234567890",
+// 			},
+// 		},
+// 	}
 
-	payload, _ = addBranchAndTag(&glMergeEvent)
+// 	payload, _ = addBranchAndTag(&glMergeEvent)
 
-	var glMergeResult glPullRequestPayload
-	err := json.Unmarshal(payload, &glMergeResult)
-	if err != nil {
-		t.Errorf("Error during unmarshall of payload for gitlab merge request in TestaddBranchAndTagGitLabMergeRequest test")
-	}
+// 	var glMergeResult glPullRequestPayload
+// 	err := json.Unmarshal(payload, &glMergeResult)
+// 	if err != nil {
+// 		t.Errorf("Error during unmarshall of payload for gitlab merge request in TestaddBranchAndTagGitLabMergeRequest test")
+// 	}
 
-	if glMergeResult.ObjectAttributes.TargetBranch != "foo" {
-		t.Errorf("Error - TargetBranch appears to have changed to %s, the Event should be unaltered", glMergeResult.ObjectAttributes.TargetBranch)
-	}
-	if glMergeResult.WebhookBranch != "foo" {
-		t.Errorf("Error - Inccorect branch name set, expected foo, received %s", glMergeResult.WebhookBranch)
-	}
-	if glMergeResult.WebhookSuggestedImageTag != "1234567" {
-		t.Errorf("Error - Inccorect tag name set, expected 1234567, received %s", glMergeResult.WebhookSuggestedImageTag)
-	}
-}
+// 	if glMergeResult.ObjectAttributes.TargetBranch != "foo" {
+// 		t.Errorf("Error - TargetBranch appears to have changed to %s, the Event should be unaltered", glMergeResult.ObjectAttributes.TargetBranch)
+// 	}
+// 	if glMergeResult.WebhookBranch != "foo" {
+// 		t.Errorf("Error - Inccorect branch name set, expected foo, received %s", glMergeResult.WebhookBranch)
+// 	}
+// 	if glMergeResult.WebhookSuggestedImageTag != "1234567" {
+// 		t.Errorf("Error - Inccorect tag name set, expected 1234567, received %s", glMergeResult.WebhookSuggestedImageTag)
+// 	}
+// }
 
 func TestValidate(t *testing.T) {
 
